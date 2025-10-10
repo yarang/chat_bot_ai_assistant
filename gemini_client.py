@@ -9,7 +9,7 @@ import uuid
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
-from message_storage import MessageStorage, Message
+from models import Message
 
 logger = logging.getLogger(__name__)
 

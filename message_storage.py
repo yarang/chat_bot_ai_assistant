@@ -11,36 +11,9 @@ from dataclasses import dataclass
 import threading
 from contextlib import contextmanager
 
+from models import Message, ChatInfo, UserInfo
+
 logger = logging.getLogger(__name__)
-
-@dataclass
-class Message:
-    """메시지 데이터 클래스"""
-    chat_id: int
-    user_id: int
-    role: str  # 'user' or 'assistant'
-    content: str
-    timestamp: datetime
-    message_id: Optional[int] = None
-    metadata: Optional[Dict] = None
-
-@dataclass
-class ChatInfo:
-    """채팅 정보 데이터 클래스"""
-    chat_id: int
-    chat_type: str  # 'private', 'group', 'supergroup', 'channel'
-    title: Optional[str] = None
-    username: Optional[str] = None
-    created_at: Optional[datetime] = None
-
-@dataclass
-class UserInfo:
-    """사용자 정보 데이터 클래스"""
-    user_id: int
-    username: Optional[str] = None
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    created_at: Optional[datetime] = None
 
 class MessageStorage:
     def clear_conversation(self, chat_id: int, user_id: int) -> int:

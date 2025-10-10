@@ -79,7 +79,8 @@ async def webhook(request: Request):
         
         # Store message for monitoring (keep last 100 messages)
         if update.message:
-            from message_storage import MessageStorage, UserInfo, ChatInfo
+            from message_storage import MessageStorage
+            from models import UserInfo, ChatInfo
             storage = MessageStorage()
 
             message_info = {

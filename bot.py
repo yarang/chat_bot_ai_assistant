@@ -16,7 +16,8 @@ from telegram.error import TelegramError
 
 from gemini_client import GeminiClient
 from config_loader import get_gemini_config, get_app_config
-from message_storage import MessageStorage, UserInfo, ChatInfo
+from message_storage import MessageStorage
+from models import UserInfo, ChatInfo
 
 logger = logging.getLogger(__name__)
 
