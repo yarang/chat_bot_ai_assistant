@@ -237,6 +237,11 @@ class GeminiClient:
             if response.text:
                 response_text = response.text.strip()
 
+                # AI 응답이 "Assistant:"로 시작하는 경우, 해당 접두사 제거
+                # 대소문자를 구분하지 않고 확인
+                if response_text.lower().startswith("assistant:"):
+                    response_text = response_text[len("assistant:") :].lstrip()
+
                 # Save assistant response to storage
                 assistant_message = Message(
                     chat_id=chat_id,
