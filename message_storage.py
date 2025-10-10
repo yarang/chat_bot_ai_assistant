@@ -415,10 +415,14 @@ class MessageStorage:
         """
         with self._get_connection() as conn:
             sql = """
-                SELECT * FROM messages 
-                WHERE content LIKE ?
+                SELECT 
+                    m.*, 
+                    t.tokens 
+                FROM messages m
+                LEFT JOIN token_usage t ON m.id = t.message_id
+                WHERE m.content LIKE ?
             """
-            params = [f"%{query}%"]
+            params = [f'%{query}%']
             
             if chat_id:
                 sql += " AND chat_id = ?"
@@ -446,6 +450,7 @@ class MessageStorage:
                     timestamp=datetime.fromisoformat(row['timestamp']),
                     metadata=metadata
                 )
+                setattr(message, 'tokens', row['tokens'] if row['tokens'] is not None else 0)
                 messages.append(message)
             
             return messages
@@ -510,6 +515,21 @@ class MessageStorage:
                 stats['total_tokens'] = 0
             
             return stats
+
+    def reset_database(self) -> None:
+        """
+        데이터베이스의 모든 테이블을 삭제하고 재생성합니다.
+        주의: 모든 데이터가 삭제됩니다.
+        """
+        with self._lock:
+            with self._get_connection() as conn:
+                logger.warning("Resetting database. All data will be lost.")
+                tables = ['users', 'chats', 'messages', 'token_usage']
+                for table in tables:
+                    conn.execute(f"DROP TABLE IF EXISTS {table}")
+                conn.commit()
+        self._init_database()
+        logger.info("Database has been reset.")
     
     def export_chat_history(self, chat_id: int, format: str = 'json') -> str:
         """

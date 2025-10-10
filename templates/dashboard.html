@@ -71,6 +71,21 @@
             white-space: pre-wrap;
             word-break: break-all;
         }
+        .btn {
+            background-color: #dc3545;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+        }
+        .btn:hover {
+            background-color: #c82333;
+        }
+        .admin-section {
+            margin-top: 30px;
+        }
     </style>
 </head>
 <body>
@@ -117,6 +132,7 @@
             <thead>
                 <tr>
                     <th>시간</th>
+                    <th>토큰</th>
                     <th>역할</th>
                     <th>사용자</th>
                     <th>메시지</th>
@@ -127,6 +143,7 @@
                 {% for msg in recent_messages %}
                 <tr>
                     <td>{{ msg.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                    <td>{{ msg.tokens if msg.tokens > 0 else '-' }}</td>
                     <td>{{ msg.role }}</td>
                     <td>{{ msg.user_id }}</td>
                     <td>{{ msg.content }}</td>
@@ -135,6 +152,35 @@
                 {% endfor %}
             </tbody>
         </table>
+
+        <div class="admin-section">
+            <h2>⚙️ DB 관리</h2>
+            <p>주의: 데이터베이스 초기화는 모든 사용자, 채팅, 메시지 기록을 영구적으로 삭제합니다.</p>
+            <button id="reset-db-btn" class="btn">데이터베이스 초기화</button>
+        </div>
     </div>
+
+    <script>
+        document.getElementById('reset-db-btn').addEventListener('click', function() {
+            if (confirm('정말로 데이터베이스를 초기화하시겠습니까? 이 작업은 되돌릴 수 없습니다.')) {
+                fetch('/admin/reset-db', {
+                    method: 'POST',
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'ok') {
+                        alert('데이터베이스가 초기화되었습니다. 페이지를 새로고침합니다.');
+                        window.location.reload();
+                    } else {
+                        alert('오류: ' + data.detail);
+                    }
+                })
+                .catch(error => {
+                    alert('서버와 통신 중 오류가 발생했습니다.');
+                    console.error('Error:', error);
+                });
+            }
+        });
+    </script>
 </body>
 </html>

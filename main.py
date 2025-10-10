@@ -249,6 +249,20 @@ async def webhook_dashboard(request: Request):
     except Exception as e:
         return HTMLResponse(content=f"<html><body><h1>오류</h1><p>Dashboard 로딩 중 오류: {str(e)}</p></body></html>")
 
+@app.post("/admin/reset-db")
+async def reset_database():
+    """
+    데이터베이스를 초기화합니다. (주의: 모든 데이터 삭제)
+    """
+    try:
+        from message_storage import MessageStorage
+        storage = MessageStorage()
+        storage.reset_database()
+        return {"status": "ok", "message": "데이터베이스가 성공적으로 초기화되었습니다."}
+    except Exception as e:
+        logger.error(f"Error resetting database: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"데이터베이스 초기화 중 오류 발생: {e}")
+
 @app.get("/stats")
 async def get_stats():
     """Get bot statistics"""
