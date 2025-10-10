@@ -79,6 +79,9 @@ async def webhook(request: Request):
         
         # Store message for monitoring (keep last 100 messages)
         if update.message:
+            from message_storage import MessageStorage, UserInfo, ChatInfo
+            storage = MessageStorage()
+
             message_info = {
                 "timestamp": update.message.date.isoformat(),
                 "user_id": update.message.from_user.id,
@@ -90,6 +93,23 @@ async def webhook(request: Request):
             message_history.append(message_info)
             if len(message_history) > 100:
                 message_history.pop(0)
+
+            # --- 사용자 및 채팅 정보 자동 저장 ---
+            user = update.message.from_user
+            chat = update.message.chat
+            
+            user_info = UserInfo(
+                user_id=user.id,
+                username=user.username,
+                first_name=user.first_name,
+                last_name=user.last_name
+            )
+            chat_info = ChatInfo(
+                chat_id=chat.id, chat_type=chat.type, title=chat.title, username=chat.username
+            )
+            storage.save_user(user_info)
+            storage.save_chat(chat_info)
+            logger.debug(f"Saved user {user.id} and chat {chat.id} info to DB.")
         
         # Process the update
         await telegram_app.process_update(update)
