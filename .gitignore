@@ -160,3 +160,5 @@ Thumbs.db
 # Logs
 logs/
 *.log
+
+bot_messages.db

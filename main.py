@@ -2,28 +2,29 @@
 Telegram Bot with Gemini AI - Main FastAPI Application
 """
 import json
+import os
 import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse
-from telegram import Update
+from fastapi.templating import Jinja2Templates
 from telegram.ext import Application
+import uvicorn
 
-from bot import setup_bot_handlers
 from config_loader import load_config
+from logging_setup import setup_logging
+from internal.utils import setup_telegram_app
 
-# Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
 logger = logging.getLogger(__name__)
 
 # Global variables
 telegram_app = None
 config = None
 message_history = []  # Store recent messages for monitoring
+
+# Setup templates
+templates = Jinja2Templates(directory="templates")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -32,7 +33,8 @@ async def lifespan(app: FastAPI):
     
     # Startup
     config = load_config()
-    telegram_app = setup_telegram_app()
+    setup_logging(config)  # Setup logging
+    telegram_app = setup_telegram_app(config)
     
     # Initialize bot
     await telegram_app.initialize()
@@ -51,11 +53,7 @@ async def lifespan(app: FastAPI):
     await telegram_app.shutdown()
     logger.info("Bot stopped")
 
-def setup_telegram_app():
-    """Setup Telegram application with handlers"""
-    app = Application.builder().token(config["telegram"]["bot_token"]).build()
-    setup_bot_handlers(app, config)
-    return app
+# setup_telegram_app is provided by internal.utils.setup_telegram_app
 
 # Create FastAPI app
 app = FastAPI(
@@ -76,6 +74,7 @@ async def webhook(request: Request):
     try:
         # Get the update from Telegram
         update_data = await request.json()
+        from telegram import Update
         update = Update.de_json(update_data, telegram_app.bot)
         
         # Store message for monitoring (keep last 100 messages)
@@ -113,71 +112,53 @@ async def health_check():
     }
 
 @app.get("/messages", response_class=HTMLResponse)
-async def view_messages():
+async def view_messages(request: Request):
     """View recent messages in a web interface"""
-    html_content = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Telegram Bot Messages</title>
-        <meta charset="UTF-8">
-        <meta http-equiv="refresh" content="10">
-        <style>
-            body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
-            .header { background-color: #0088cc; color: white; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
-            .message { background-color: white; border: 1px solid #ddd; margin: 10px 0; padding: 15px; border-radius: 5px; }
-            .user-info { font-weight: bold; color: #0088cc; }
-            .timestamp { color: #666; font-size: 0.9em; }
-            .message-text { margin: 10px 0; padding: 10px; background-color: #f9f9f9; border-left: 3px solid #0088cc; }
-            .stats { background-color: #e8f4f8; padding: 10px; border-radius: 5px; margin-bottom: 20px; }
-            .no-messages { text-align: center; color: #666; padding: 50px; }
-        </style>
-    </head>
-    <body>
-        <div class="header">
-            <h1>🤖 Telegram Bot Message Monitor</h1>
-            <p>실시간 메시지 모니터링 (10초마다 자동 새로고침)</p>
-        </div>
-        
-        <div class="stats">
-            <strong>📊 통계:</strong> 
-            총 메시지: """ + str(len(message_history)) + """개 | 
-            활성 사용자: """ + str(len(set(msg["user_id"] for msg in message_history))) + """명
-        </div>
-    """
-    
-    if not message_history:
-        html_content += '<div class="no-messages">아직 메시지가 없습니다.</div>'
-    else:
-        # Show latest messages first
-        for msg in reversed(message_history[-20:]):  # Show last 20 messages
-            html_content += f"""
-            <div class="message">
-                <div class="user-info">
-                    👤 {msg['first_name']} (@{msg['username']}) - ID: {msg['user_id']}
-                </div>
-                <div class="timestamp">
-                    🕒 {msg['timestamp']}
-                </div>
-                <div class="message-text">
-                    💬 {msg['message']}
-                </div>
-            </div>
-            """
-    
-    html_content += """
-        </body>
-    </html>
-    """
-    return html_content
+    # DB에서 최근 메시지 조회
+    from message_storage import MessageStorage
+    message_storage = globals().get('message_storage')
+    if not message_storage:
+        message_storage = MessageStorage()
+    # 최근 20개 메시지 (모든 채팅, 모든 사용자)
+    recent_messages = []
+    import sqlite3
+    with message_storage._get_connection() as conn:
+        cursor = conn.execute("SELECT * FROM messages ORDER BY timestamp DESC LIMIT 20")
+        rows = cursor.fetchall()
+        for row in rows:
+            recent_messages.append({
+                "user_id": row["user_id"],
+                "username": "-",
+                "first_name": "-",
+                "timestamp": row["timestamp"],
+                "message": row["content"]
+            })
+
+    context = {
+        "request": request,
+        "recent_messages": recent_messages,
+        "total_messages": len(recent_messages),
+        "active_users": len(set(msg["user_id"] for msg in recent_messages))
+    }
+    return templates.TemplateResponse("messages.html", context)
 
 @app.get("/messages/json")
 async def get_messages_json():
     """Get recent messages as JSON"""
+    from services.message_service import MessageService
+    message_service = globals().get('message_service')
+    if not message_service:
+        # message_storage가 이미 전역에 있다면 활용
+        message_storage = globals().get('message_storage')
+        if not message_storage:
+            from message_storage import MessageStorage
+            message_storage = MessageStorage()
+        message_service = MessageService(message_storage)
+    recent_messages = message_service.get_all_messages(limit=20)
     return {
-        "total_messages": len(message_history),
-        "active_users": len(set(msg["user_id"] for msg in message_history)),
-        "recent_messages": message_history[-20:] if message_history else []
+        "total_messages": len(recent_messages),
+        "active_users": len(set(msg["user_id"] for msg in recent_messages)),
+        "recent_messages": recent_messages
     }
 
 @app.get("/webhook/info")
@@ -241,83 +222,22 @@ async def set_webhook():
         return {"error": str(e)}
 
 @app.get("/dashboard", response_class=HTMLResponse)
-async def webhook_dashboard():
+async def webhook_dashboard(request: Request):
     """Webhook status dashboard"""
     try:
         webhook_info = await telegram_app.bot.get_webhook_info()
         webhook_status = "✅ 활성" if webhook_info.url else "❌ 비활성"
         
-        html_content = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Telegram Bot Dashboard</title>
-            <meta charset="UTF-8">
-            <meta http-equiv="refresh" content="30">
-            <style>
-                body {{ font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }}
-                .header {{ background-color: #0088cc; color: white; padding: 15px; border-radius: 5px; margin-bottom: 20px; }}
-                .card {{ background-color: white; border: 1px solid #ddd; margin: 10px 0; padding: 20px; border-radius: 5px; }}
-                .status-good {{ color: #28a745; font-weight: bold; }}
-                .status-bad {{ color: #dc3545; font-weight: bold; }}
-                .status-warning {{ color: #ffc107; font-weight: bold; }}
-                .info-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0; }}
-                .btn {{ background-color: #0088cc; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin: 5px; display: inline-block; }}
-                .btn:hover {{ background-color: #0066aa; }}
-                table {{ width: 100%; border-collapse: collapse; }}
-                th, td {{ padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }}
-                th {{ background-color: #f8f9fa; }}
-            </style>
-        </head>
-        <body>
-            <div class="header">
-                <h1>🤖 Telegram Bot Dashboard</h1>
-                <p>봇 상태 및 Webhook 모니터링 (30초마다 자동 새로고침)</p>
-            </div>
-            
-            <div class="info-grid">
-                <div class="card">
-                    <h3>📡 Webhook 상태</h3>
-                    <p><strong>상태:</strong> <span class="{'status-good' if webhook_info.url else 'status-bad'}">{webhook_status}</span></p>
-                    <p><strong>URL:</strong> {webhook_info.url or '설정되지 않음'}</p>
-                    <p><strong>대기 중인 업데이트:</strong> {webhook_info.pending_update_count}개</p>
-                    {'<p><strong>마지막 오류:</strong> <span class="status-bad">' + str(webhook_info.last_error_message) + '</span></p>' if webhook_info.last_error_message else '<p><strong>오류:</strong> <span class="status-good">없음</span></p>'}
-                </div>
-                
-                <div class="card">
-                    <h3>📊 봇 통계</h3>
-                    <p><strong>총 메시지:</strong> {len(message_history)}개</p>
-                    <p><strong>활성 사용자:</strong> {len(set(msg["user_id"] for msg in message_history))}명</p>
-                    <p><strong>봇 실행 상태:</strong> <span class="status-good">✅ 정상</span></p>
-                </div>
-            </div>
-            
-            <div class="card">
-                <h3>🔧 관리 도구</h3>
-                <a href="/webhook/info" class="btn">Webhook 정보 (JSON)</a>
-                <a href="/messages" class="btn">실시간 메시지</a>
-                <a href="/stats" class="btn">통계 (JSON)</a>
-                <a href="/health" class="btn">상태 확인</a>
-            </div>
-            
-            <div class="card">
-                <h3>📋 Webhook 상세 정보</h3>
-                <table>
-                    <tr><th>항목</th><th>값</th></tr>
-                    <tr><td>Webhook URL</td><td>{webhook_info.url or '없음'}</td></tr>
-                    <tr><td>사용자 정의 인증서</td><td>{'예' if webhook_info.has_custom_certificate else '아니오'}</td></tr>
-                    <tr><td>최대 연결 수</td><td>{webhook_info.max_connections}</td></tr>
-                    <tr><td>허용된 업데이트</td><td>{', '.join(webhook_info.allowed_updates) if webhook_info.allowed_updates else '모든 업데이트'}</td></tr>
-                    <tr><td>마지막 오류 시간</td><td>{webhook_info.last_error_date.strftime('%Y-%m-%d %H:%M:%S') if webhook_info.last_error_date else '없음'}</td></tr>
-                </table>
-            </div>
-            
-        </body>
-        </html>
-        """
-        return html_content
+        context = {
+            "request": request,
+            "webhook_info": webhook_info,
+            "webhook_status": webhook_status,
+            "message_history": message_history,
+            "active_users": len(set(msg["user_id"] for msg in message_history))
+        }
+        return templates.TemplateResponse("dashboard.html", context)
     except Exception as e:
-        return f"<html><body><h1>오류</h1><p>Dashboard 로딩 중 오류: {str(e)}</p></body></html>"
+        return HTMLResponse(content=f"<html><body><h1>오류</h1><p>Dashboard 로딩 중 오류: {str(e)}</p></body></html>")
 
 @app.get("/stats")
 async def get_stats():
@@ -344,10 +264,10 @@ async def get_stats():
     }
 
 if __name__ == "__main__":
-    import uvicorn
     
     # Load config for development
     config = load_config()
+    setup_logging(config)
     
     print("🤖 Starting Telegram Gemini Bot...")
     print(f"📍 Host: {config['telegram']['host']}")
