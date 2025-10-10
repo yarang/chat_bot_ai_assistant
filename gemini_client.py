@@ -2,6 +2,8 @@
 Google Gemini API Client for Telegram Bot with SQLite Storage
 """
 
+from __future__ import annotations
+
 import logging
 from typing import Optional, Dict, Any, List
 from datetime import datetime
@@ -10,6 +12,7 @@ import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 from models import Message
+from message_storage import MessageStorage
 
 logger = logging.getLogger(__name__)
 
