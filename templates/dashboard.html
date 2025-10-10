@@ -83,12 +83,32 @@
                 <div class="value">{{ webhook_status }}</div>
             </div>
             <div class="status-card">
-                <h3>활성 사용자</h3>
+                <h3>총 사용자 (DB)</h3>
                 <div class="value">{{ active_users }}</div>
             </div>
             <div class="status-card">
-                <h3>최근 메시지 (100개)</h3>
-                <div class="value">{{ message_history | length }}</div>
+                <h3>총 메시지 (DB)</h3>
+                <div class="value">{{ db_stats.messages_count }}</div>
+            </div>
+        </div>
+
+        <h2>📊 DB 통계</h2>
+        <div class="status-box">
+            <div class="status-card">
+                <h3>총 토큰 사용량</h3>
+                <div class="value">{{ db_stats.total_tokens | int }}</div>
+            </div>
+            <div class="status-card">
+                <h3>총 사용자</h3>
+                <div class="value">{{ db_stats.users_count }}</div>
+            </div>
+            <div class="status-card">
+                <h3>총 메시지</h3>
+                <div class="value">{{ db_stats.messages_count }}</div>
+            </div>
+            <div class="status-card">
+                <h3>DB 크기 (MB)</h3>
+                <div class="value">{{ db_stats.db_size_mb }}</div>
             </div>
         </div>
 
@@ -97,17 +117,19 @@
             <thead>
                 <tr>
                     <th>시간</th>
+                    <th>역할</th>
                     <th>사용자</th>
                     <th>메시지</th>
                     <th>채팅 ID</th>
                 </tr>
             </thead>
             <tbody>
-                {% for msg in message_history | reverse %}
+                {% for msg in recent_messages %}
                 <tr>
-                    <td>{{ msg.timestamp }}</td>
-                    <td>{{ msg.first_name }} ({{ msg.user_id }})</td>
-                    <td>{{ msg.message }}</td>
+                    <td>{{ msg.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                    <td>{{ msg.role }}</td>
+                    <td>{{ msg.user_id }}</td>
+                    <td>{{ msg.content }}</td>
                     <td>{{ msg.chat_id }}</td>
                 </tr>
                 {% endfor %}

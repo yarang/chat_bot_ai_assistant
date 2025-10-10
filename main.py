@@ -228,12 +228,22 @@ async def webhook_dashboard(request: Request):
         webhook_info = await telegram_app.bot.get_webhook_info()
         webhook_status = "✅ 활성" if webhook_info.url else "❌ 비활성"
         
+        # DB에서 통계 및 최근 메시지 가져오기
+        from message_storage import MessageStorage
+        storage = MessageStorage()
+        db_stats = storage.get_database_stats()
+        
+        # search_messages는 최신순으로 반환합니다.
+        recent_messages_from_db = storage.search_messages(query="%", limit=20)
+
         context = {
             "request": request,
             "webhook_info": webhook_info,
             "webhook_status": webhook_status,
-            "message_history": message_history,
-            "active_users": len(set(msg["user_id"] for msg in message_history))
+            "db_stats": db_stats,
+            "recent_messages": recent_messages_from_db,
+            # 메모리 기반 활성 사용자 대신 DB 기반 총 사용자 수 사용
+            "active_users": db_stats.get("users_count", 0) 
         }
         return templates.TemplateResponse("dashboard.html", context)
     except Exception as e:
