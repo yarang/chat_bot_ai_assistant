@@ -22,11 +22,18 @@ class MessageHandlerService:
             return
         try:
             await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-            response = await self.gemini_client.generate_response(
+            raw_response = await self.gemini_client.generate_response(
                 chat_id=update.effective_chat.id,
                 user_id=user.id,
                 message=message
             )
+            # Ensure response is a string for Telegram
+            try:
+                response = str(raw_response) if raw_response is not None else ""
+            except Exception:
+                logger.exception("Failed to coerce Gemini response to string")
+                response = ""
+
             max_telegram_length = 4096
             if len(response) > max_telegram_length:
                 chunks = [response[i:i+max_telegram_length] for i in range(0, len(response), max_telegram_length)]

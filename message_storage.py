@@ -246,8 +246,8 @@ class MessageStorage:
 
             sql += " ORDER BY timestamp DESC LIMIT :limit"
 
-            cursor = conn.execute(text(sql), params)
-            rows = cursor.fetchall()
+            result = conn.execute(text(sql), params)
+            rows = result.mappings().fetchall()
             
             messages = []
             for row in reversed(rows):  # 시간순으로 정렬
@@ -270,7 +270,7 @@ class MessageStorage:
         from sqlalchemy import text
         with self._get_connection() as conn:
             # 총 메시지 수
-            cursor = conn.execute(text("""
+            result = conn.execute(text("""
                 SELECT COUNT(*) as total_messages,
                        COUNT(CASE WHEN role = 'user' THEN 1 END) as user_messages,
                        COUNT(CASE WHEN role = 'assistant' THEN 1 END) as assistant_messages,
@@ -279,31 +279,32 @@ class MessageStorage:
                 FROM messages 
                 WHERE user_id = :user_id
             """), {"user_id": user_id})
-            stats = dict(cursor.fetchone())
+            row = result.mappings().fetchone() or {}
+            stats = dict(row)
 
             # 채팅방별 메시지 수
-            cursor = conn.execute(text("""
+            result = conn.execute(text("""
                 SELECT chat_id, COUNT(*) as message_count
                 FROM messages 
                 WHERE user_id = :user_id
                 GROUP BY chat_id
                 ORDER BY message_count DESC
             """), {"user_id": user_id})
-            stats['chats'] = [dict(row) for row in cursor.fetchall()]
+            stats['chats'] = [dict(r) for r in result.mappings().fetchall()]
 
             # 토큰 사용량 통계 추가
-            cursor = conn.execute(text("""
+            result = conn.execute(text("""
                 SELECT SUM(tokens) as total_tokens,
                        SUM(CASE WHEN role = 'user' THEN tokens ELSE 0 END) as user_tokens,
                        SUM(CASE WHEN role = 'assistant' THEN tokens ELSE 0 END) as assistant_tokens
                 FROM token_usage
                 WHERE user_id = :user_id
             """), {"user_id": user_id})
-            token_row = cursor.fetchone()
+            token_row = result.mappings().fetchone() or {}
             stats['token_usage'] = {
-                'total_tokens': token_row['total_tokens'] or 0,
-                'user_tokens': token_row['user_tokens'] or 0,
-                'assistant_tokens': token_row['assistant_tokens'] or 0,
+                'total_tokens': token_row.get('total_tokens', 0) or 0,
+                'user_tokens': token_row.get('user_tokens', 0) or 0,
+                'assistant_tokens': token_row.get('assistant_tokens', 0) or 0,
             }
 
             return stats
@@ -333,7 +334,7 @@ class MessageStorage:
         """사용자별 토큰 통계 반환"""
         from sqlalchemy import text
         with self._get_connection() as conn:
-            cursor = conn.execute(text("""
+            result = conn.execute(text("""
                 SELECT SUM(tokens) as total_tokens,
                        COUNT(*) as records,
                        MIN(timestamp) as first_record,
@@ -341,23 +342,23 @@ class MessageStorage:
                 FROM token_usage
                 WHERE user_id = :user_id
             """), {"user_id": user_id})
-            row = cursor.fetchone()
+            row = result.mappings().fetchone() or {}
             stats = {
-                'total_tokens': row['total_tokens'] or 0,
-                'records': row['records'] or 0,
-                'first_record': row['first_record'],
-                'last_record': row['last_record']
+                'total_tokens': row.get('total_tokens', 0) or 0,
+                'records': row.get('records', 0) or 0,
+                'first_record': row.get('first_record'),
+                'last_record': row.get('last_record')
             }
 
             # 채팅방별 토큰 합계
-            cursor = conn.execute(text("""
+            result = conn.execute(text("""
                 SELECT chat_id, SUM(tokens) as tokens
                 FROM token_usage
                 WHERE user_id = :user_id
                 GROUP BY chat_id
                 ORDER BY tokens DESC
             """), {"user_id": user_id})
-            stats['by_chat'] = [dict(r) for r in cursor.fetchall()]
+            stats['by_chat'] = [dict(r) for r in result.mappings().fetchall()]
 
             return stats
     
@@ -366,7 +367,7 @@ class MessageStorage:
         from sqlalchemy import text
         with self._get_connection() as conn:
             # 기본 통계
-            cursor = conn.execute(text("""
+            result = conn.execute(text("""
                 SELECT COUNT(*) as total_messages,
                        COUNT(DISTINCT user_id) as unique_users,
                        MIN(timestamp) as first_message,
@@ -375,10 +376,10 @@ class MessageStorage:
                 WHERE chat_id = :chat_id
             """), {"chat_id": chat_id})
             
-            stats = dict(cursor.fetchone())
+            stats = dict(result.mappings().fetchone() or {})
             
             # 사용자별 메시지 수
-            cursor = conn.execute(text("""
+            result = conn.execute(text("""
                 SELECT u.username, u.first_name, m.user_id, COUNT(*) as message_count
                 FROM messages m
                 LEFT JOIN users u ON m.user_id = u.user_id
@@ -387,7 +388,7 @@ class MessageStorage:
                 ORDER BY message_count DESC
             """), {"chat_id": chat_id})
             
-            stats['users'] = [dict(row) for row in cursor.fetchall()]
+            stats['users'] = [dict(row) for row in result.mappings().fetchall()]
             
             return stats
     
@@ -425,8 +426,8 @@ class MessageStorage:
 
             sql += " ORDER BY timestamp DESC LIMIT :limit"
 
-            cursor = conn.execute(text(sql), params)
-            rows = cursor.fetchall()
+            result = conn.execute(text(sql), params)
+            rows = result.mappings().fetchall()
             
             messages = []
             for row in rows:

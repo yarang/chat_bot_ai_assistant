@@ -215,12 +215,57 @@ class GeminiClient:
             response = self.model.generate_content(prompt)
             logger.debug("Received response from Gemini API.")
 
+            # Defensive extraction helpers: SDK may return object, mapping, or
+            # sequence. Normalize to avoid tuple/dict indexing errors.
+            def _extract_field(obj, name):
+                # attribute access
+                try:
+                    val = getattr(obj, name)
+                    if val is not None:
+                        return val
+                except Exception:
+                    pass
+                # mapping access
+                try:
+                    if isinstance(obj, dict) and name in obj:
+                        return obj[name]
+                    if hasattr(obj, 'get'):
+                        v = obj.get(name)
+                        if v is not None:
+                            return v
+                except Exception:
+                    pass
+                # sequence: try each item recursively
+                try:
+                    if isinstance(obj, (list, tuple)) and len(obj) > 0:
+                        for item in obj:
+                            v = _extract_field(item, name)
+                            if v is not None:
+                                return v
+                except Exception:
+                    pass
+                return None
+
             # API 응답에서 실제 토큰 사용량 가져오기
             prompt_tokens = 0
             candidate_tokens = 0
-            if response.usage_metadata:
-                prompt_tokens = response.usage_metadata.prompt_token_count
-                candidate_tokens = response.usage_metadata.candidates_token_count
+
+            usage_meta = _extract_field(response, 'usage_metadata')
+            if usage_meta:
+                try:
+                    # usage_meta may be object or mapping
+                    prompt_tokens = getattr(usage_meta, 'prompt_token_count', None) or usage_meta.get('prompt_token_count', 0)
+                    candidate_tokens = getattr(usage_meta, 'candidates_token_count', None) or usage_meta.get('candidates_token_count', 0)
+                except Exception:
+                    # last resort: introspect tuple/list
+                    try:
+                        if isinstance(usage_meta, (list, tuple)) and len(usage_meta) >= 2:
+                            prompt_tokens = int(usage_meta[0])
+                            candidate_tokens = int(usage_meta[1])
+                    except Exception:
+                        prompt_tokens = 0
+                        candidate_tokens = 0
+
                 logger.info(f"Gemini API token usage: prompt={prompt_tokens}, candidates={candidate_tokens}")
 
                 # 입력(user) 토큰 저장
@@ -237,8 +282,26 @@ class GeminiClient:
                     logger.exception("Failed to record user token usage from API")
 
 
-            if response.text:
-                response_text = response.text.strip()
+            # Defensive extraction for the main text body
+            response_text = None
+            raw_text = _extract_field(response, 'text')
+            if raw_text:
+                try:
+                    response_text = raw_text.strip()
+                except Exception:
+                    try:
+                        response_text = str(raw_text)
+                    except Exception:
+                        response_text = None
+
+            # If we still don't have text, log the response structure for debugging
+            if response_text is None:
+                try:
+                    logger.debug(f"Gemini response raw type: {type(response)}, repr: {repr(response)[:200]}")
+                except Exception:
+                    pass
+
+            if response_text:
 
                 # AI 응답이 "Assistant:"로 시작하는 경우, 해당 접두사 제거
                 # 대소문자를 구분하지 않고 확인
