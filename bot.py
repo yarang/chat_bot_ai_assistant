@@ -2,7 +2,7 @@
 Telegram Bot Handlers and Logic with SQLite Storage
 """
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from telegram import Update
 from telegram.ext import (
     Application, 
@@ -16,18 +16,38 @@ from telegram.error import TelegramError
 
 from gemini_client import GeminiClient
 from config_loader import get_gemini_config, get_app_config
-from message_storage import MessageStorage, UserInfo, ChatInfo
+from message_storage import MessageStorage
+from models import UserInfo, ChatInfo
 
 logger = logging.getLogger(__name__)
 
 
 class Bot:
-    def __init__(self, gemini_client, message_service, command_handler_service, message_handler_service, error_handler):
+    """Bot container that holds references to services and sets up handlers.
+
+    This class now supports dynamic registration/unregistration of services so
+    new services can be added without changing the constructor signature.
+    """
+    def __init__(self, gemini_client=None, services: Optional[Dict[str, Any]] = None, **kwargs):
+        # Core client kept as dedicated attribute for convenience
         self.gemini_client = gemini_client
-        self.message_service = message_service
-        self.command_handler_service = command_handler_service
-        self.message_handler_service = message_handler_service
-        self.error_handler_service = error_handler
+
+        # Internal service registry
+        self._services: Dict[str, Any] = {}
+
+        # Accept a services dict or individual named services as kwargs for
+        # backward compatibility with existing code.
+        if services:
+            if not isinstance(services, dict):
+                raise TypeError("services must be a dict[str, Any]")
+            self._services.update(services)
+
+        # allow passing services as keyword args (e.g., message_service=...)
+        self._services.update(kwargs)
+
+        # Mirror common service names as attributes for convenience (optional)
+        for name, svc in self._services.items():
+            setattr(self, name, svc)
 
     def setup_bot_handlers(self, app: Application, config: Dict[str, Any]) -> None:
         """
@@ -35,14 +55,63 @@ class Bot:
         """
         # 핸들러에 self를 전달하기 위해 partial 사용
         from functools import partial
-        app.add_handler(CommandHandler("start", self.command_handler_service.start))
-        app.add_handler(CommandHandler("help", self.command_handler_service.help))
-        app.add_handler(CommandHandler("clear", self.command_handler_service.clear))
-        # 추가 명령어 핸들러도 여기에 등록
-        # clear, info, settings 등도 command_handler_service에 추가 구현 필요
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.message_handler_service.handle))
-        app.add_error_handler(self.error_handler_service.handle)
+
+        # Resolve services from registry. This allows adding/removing
+        # handler services without changing this class's signature.
+        cmd_svc = self.get_service("command_handler_service")
+        msg_svc = self.get_service("message_handler_service")
+        err_svc = self.get_service("error_handler_service")
+
+        if not cmd_svc:
+            raise RuntimeError("command_handler_service is required to setup handlers")
+        if not msg_svc:
+            raise RuntimeError("message_handler_service is required to setup handlers")
+
+        app.add_handler(CommandHandler("start", cmd_svc.start))
+        app.add_handler(CommandHandler("help", cmd_svc.help))
+        # only register clear if the service implements it
+        if hasattr(cmd_svc, "clear"):
+            app.add_handler(CommandHandler("clear", cmd_svc.clear))
+
+        # Register text message handler
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg_svc.handle))
+
+        # Register error handler if available
+        if err_svc and hasattr(err_svc, "handle"):
+            app.add_error_handler(err_svc.handle)
+
         logger.info("Bot handlers setup complete with DI & SRP")
+
+    # --- Dynamic service registry API -------------------------------------------------
+    def register_service(self, name: str, service: Any) -> None:
+        """Register a service under a string name.
+
+        Also exposes the service as an attribute on the Bot instance for
+        convenience (e.g., bot.command_handler_service).
+        """
+        if not name or not isinstance(name, str):
+            raise ValueError("service name must be a non-empty string")
+        self._services[name] = service
+        setattr(self, name, service)
+
+    def get_service(self, name: str, default: Any = None) -> Any:
+        """Retrieve a registered service by name."""
+        return self._services.get(name, default)
+
+    def unregister_service(self, name: str) -> None:
+        """Remove a service from the registry and delete attribute mirror."""
+        if name in self._services:
+            del self._services[name]
+        if hasattr(self, name):
+            try:
+                delattr(self, name)
+            except Exception:
+                # best-effort removal of attribute
+                pass
+
+    def list_services(self) -> Dict[str, Any]:
+        """Return a shallow copy of registered services."""
+        return dict(self._services)
 
     # 핸들러 책임은 각 서비스로 위임
 

@@ -1,0 +1,5 @@
+{
+    "backend": "sqlite",
+    "path": "bot_messages.db",
+    "echo": false
+}

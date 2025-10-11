@@ -1,0 +1,9 @@
+{
+  "backend": "postgresql",
+  "user": "appuser",
+  "password": "secret",
+  "host": "db-host",
+  "port": 5432,
+  "dbname": "appdb",
+  "echo": false
+}

@@ -79,6 +79,10 @@ async def webhook(request: Request):
         
         # Store message for monitoring (keep last 100 messages)
         if update.message:
+            from message_storage import MessageStorage
+            from models import UserInfo, ChatInfo
+            storage = MessageStorage()
+
             message_info = {
                 "timestamp": update.message.date.isoformat(),
                 "user_id": update.message.from_user.id,
@@ -90,6 +94,23 @@ async def webhook(request: Request):
             message_history.append(message_info)
             if len(message_history) > 100:
                 message_history.pop(0)
+
+            # --- 사용자 및 채팅 정보 자동 저장 ---
+            user = update.message.from_user
+            chat = update.message.chat
+            
+            user_info = UserInfo(
+                user_id=user.id,
+                username=user.username,
+                first_name=user.first_name,
+                last_name=user.last_name
+            )
+            chat_info = ChatInfo(
+                chat_id=chat.id, chat_type=chat.type, title=chat.title, username=chat.username
+            )
+            storage.save_user(user_info)
+            storage.save_chat(chat_info)
+            logger.debug(f"Saved user {user.id} and chat {chat.id} info to DB.")
         
         # Process the update
         await telegram_app.process_update(update)
@@ -228,16 +249,40 @@ async def webhook_dashboard(request: Request):
         webhook_info = await telegram_app.bot.get_webhook_info()
         webhook_status = "✅ 활성" if webhook_info.url else "❌ 비활성"
         
+        # DB에서 통계 및 최근 메시지 가져오기
+        from message_storage import MessageStorage
+        storage = MessageStorage()
+        db_stats = storage.get_database_stats()
+        
+        # search_messages는 최신순으로 반환합니다.
+        recent_messages_from_db = storage.search_messages(query="%", limit=20)
+
         context = {
             "request": request,
             "webhook_info": webhook_info,
             "webhook_status": webhook_status,
-            "message_history": message_history,
-            "active_users": len(set(msg["user_id"] for msg in message_history))
+            "db_stats": db_stats,
+            "recent_messages": recent_messages_from_db,
+            # 메모리 기반 활성 사용자 대신 DB 기반 총 사용자 수 사용
+            "active_users": db_stats.get("unique_user_chat_count", 0) 
         }
         return templates.TemplateResponse("dashboard.html", context)
     except Exception as e:
         return HTMLResponse(content=f"<html><body><h1>오류</h1><p>Dashboard 로딩 중 오류: {str(e)}</p></body></html>")
+
+@app.post("/admin/reset-db")
+async def reset_database():
+    """
+    데이터베이스를 초기화합니다. (주의: 모든 데이터 삭제)
+    """
+    try:
+        from message_storage import MessageStorage
+        storage = MessageStorage()
+        storage.reset_database()
+        return {"status": "ok", "message": "데이터베이스가 성공적으로 초기화되었습니다."}
+    except Exception as e:
+        logger.error(f"Error resetting database: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"데이터베이스 초기화 중 오류 발생: {e}")
 
 @app.get("/stats")
 async def get_stats():

@@ -1,0 +1,9 @@
+{
+  "backend": "mariadb",
+  "user": "appuser",
+  "password": "secret",
+  "host": "db-host",
+  "port": 3306,
+  "dbname": "appdb",
+  "echo": false
+}
