@@ -35,12 +35,15 @@ def setup_telegram_app(config):
 
     from bot import Bot
 
-    bot = Bot(
-        gemini_client,
-        message_service,
-        command_handler_service,
-        message_handler_service,
-        error_handler_service
-    )
+    # Pass services as a dict for the new dynamic registry while keeping
+    # the gemini_client positional argument for convenience.
+    services = {
+        "message_service": message_service,
+        "command_handler_service": command_handler_service,
+        "message_handler_service": message_handler_service,
+        "error_handler_service": error_handler_service,
+    }
+
+    bot = Bot(gemini_client=gemini_client, services=services)
     bot.setup_bot_handlers(app, config)
     return app

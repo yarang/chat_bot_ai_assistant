@@ -162,3 +162,7 @@ logs/
 *.log
 
 bot_messages.db
+copilot-instructions.md
+.copilot-instructions.md
+gemini.md
+.github/
