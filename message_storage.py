@@ -60,7 +60,9 @@ class MessageStorage:
             # not always accepted as SQLAlchemy 'text' executables in all
             # configurations.
             result = conn.exec_driver_sql(f"PRAGMA table_info({table_name})")
-            columns = [row['name'] for row in result.fetchall()]
+            # Use mappings() to get dict-like rows so we can access by column name
+            mappings = result.mappings().fetchall()
+            columns = [row['name'] for row in mappings]
             if column_name not in columns:
                 logger.info(f"Adding column '{column_name}' to table '{table_name}'...")
                 conn.exec_driver_sql(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
