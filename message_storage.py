@@ -3,6 +3,7 @@ SQLite 기반 메시지 히스토리 저장소
 채팅방별, 사용자별 메시지 관리 시스템
 """
 import sqlite3
+import re
 import json
 import logging
 from datetime import datetime, timedelta
@@ -51,11 +52,18 @@ class MessageStorage:
         테이블에 특정 컬럼이 존재하지 않으면 추가합니다.
         """
         try:
-            cursor = conn.execute(f"PRAGMA table_info({table_name})")
-            columns = [row['name'] for row in cursor.fetchall()]
+            # sanitize table name to avoid SQL injection for PRAGMA/DDL
+            if not re.match(r'^[A-Za-z0-9_]+$', table_name):
+                raise ValueError("invalid table name")
+
+            # Use driver-level exec to run PRAGMA and DDL statements which are
+            # not always accepted as SQLAlchemy 'text' executables in all
+            # configurations.
+            result = conn.exec_driver_sql(f"PRAGMA table_info({table_name})")
+            columns = [row['name'] for row in result.fetchall()]
             if column_name not in columns:
                 logger.info(f"Adding column '{column_name}' to table '{table_name}'...")
-                conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
+                conn.exec_driver_sql(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
                 logger.info(f"Column '{column_name}' added to table '{table_name}'.")
         except sqlite3.Error as e:
             # 테이블이 아직 존재하지 않는 경우 등 PRAGMA에서 오류가 발생할 수 있음
@@ -455,7 +463,8 @@ class MessageStorage:
                 deleted_count = cursor.rowcount
 
                 # VACUUM으로 디스크 공간 회수
-                conn.execute(text("VACUUM"))
+                # Use driver-level execution for VACUUM which is DDL-like
+                conn.exec_driver_sql("VACUUM")
 
                 logger.info(f"Cleaned up {deleted_count} old messages")
                 return deleted_count
@@ -472,7 +481,7 @@ class MessageStorage:
                 stats[f'{table}_count'] = cursor.fetchone()[0]
 
             # 데이터베이스 크기
-            cursor = conn.execute(text("SELECT page_count * page_size as size FROM pragma_page_count(), pragma_page_size()"))
+            cursor = conn.exec_driver_sql("SELECT page_count * page_size as size FROM pragma_page_count(), pragma_page_size()")
             stats['db_size_bytes'] = cursor.fetchone()[0]
             stats['db_size_mb'] = round(stats['db_size_bytes'] / 1024 / 1024, 2)
 
