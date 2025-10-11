@@ -496,7 +496,7 @@ class MessageStorage:
                 GROUP BY DATE(timestamp)
                 ORDER BY date DESC
             """))
-            stats['recent_activity'] = [dict(row) for row in cursor.fetchall()]
+            stats['recent_activity'] = cursor.mappings().fetchall()
             # 전체 토큰 사용량 요약
             try:
                 cursor = conn.execute(text("SELECT SUM(tokens) as total_tokens FROM token_usage"))
