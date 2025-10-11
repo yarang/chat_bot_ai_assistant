@@ -264,7 +264,7 @@ async def webhook_dashboard(request: Request):
             "db_stats": db_stats,
             "recent_messages": recent_messages_from_db,
             # 메모리 기반 활성 사용자 대신 DB 기반 총 사용자 수 사용
-            "active_users": db_stats.get("users_count", 0) 
+            "active_users": db_stats.get("unique_user_chat_count", 0) 
         }
         return templates.TemplateResponse("dashboard.html", context)
     except Exception as e:

@@ -504,6 +504,13 @@ class MessageStorage:
             except Exception:
                 stats['total_tokens'] = 0
 
+            # 채널별 유니크 유저 수
+            try:
+                cursor = conn.execute(text("SELECT COUNT(*) FROM (SELECT DISTINCT chat_id, user_id FROM messages)"))
+                stats['unique_user_chat_count'] = cursor.fetchone()[0]
+            except Exception:
+                stats['unique_user_chat_count'] = 0
+
             return stats
 
     def reset_database(self) -> None:

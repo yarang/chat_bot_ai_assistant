@@ -98,7 +98,7 @@
                 <div class="value">{{ webhook_status }}</div>
             </div>
             <div class="status-card">
-                <h3>총 사용자 (DB)</h3>
+                <h3>총 사용자/채널</h3>
                 <div class="value">{{ active_users }}</div>
             </div>
             <div class="status-card">
@@ -113,10 +113,7 @@
                 <h3>총 토큰 사용량</h3>
                 <div class="value">{{ db_stats.total_tokens | int }}</div>
             </div>
-            <div class="status-card">
-                <h3>총 사용자</h3>
-                <div class="value">{{ db_stats.users_count }}</div>
-            </div>
+
             <div class="status-card">
                 <h3>총 메시지</h3>
                 <div class="value">{{ db_stats.messages_count }}</div>
