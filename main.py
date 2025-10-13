@@ -7,7 +7,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from telegram.ext import Application
 import uvicorn
@@ -15,6 +15,7 @@ import uvicorn
 from config_loader import load_config
 from logging_setup import setup_logging
 from internal.utils import setup_telegram_app
+from services.telegram_auth import TelegramAuthPayload, verify_telegram_auth
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,64 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+@app.get("/login", response_class=HTMLResponse)
+async def telegram_login_page(request: Request):
+    """
+    Render the Telegram login widget page.
+    """
+    if not config:
+        raise HTTPException(status_code=503, detail="Configuration not loaded")
+
+    telegram_settings = config.get("telegram", {})
+    bot_username = telegram_settings.get("bot_username")
+    if not bot_username:
+        raise HTTPException(status_code=500, detail="Telegram bot username is not configured")
+
+    context = {
+        "request": request,
+        "bot_username": bot_username,
+        "request_access": telegram_settings.get("login_request_access", "write"),
+        "button_size": telegram_settings.get("login_button_size", "large"),
+        "button_radius": telegram_settings.get("login_button_radius", 10),
+        "show_userpic": telegram_settings.get("login_show_userpic", True),
+    }
+    return templates.TemplateResponse("login.html", context)
+
+@app.post("/auth/telegram")
+async def authenticate_telegram_user(payload: TelegramAuthPayload):
+    """
+    Verify Telegram login payload and persist user info.
+    """
+    if not config:
+        raise HTTPException(status_code=503, detail="Configuration not loaded")
+
+    bot_token = config["telegram"].get("bot_token")
+    if not bot_token:
+        raise HTTPException(status_code=500, detail="Bot token is not configured")
+
+    if not verify_telegram_auth(payload, bot_token):
+        raise HTTPException(status_code=403, detail="Invalid auth data")
+
+    # Persist basic user info for future use
+    from message_storage import MessageStorage
+    from models import UserInfo
+
+    message_storage = globals().get("message_storage")
+    if not message_storage:
+        message_storage = MessageStorage()
+        globals()["message_storage"] = message_storage
+
+    user_info = UserInfo(
+        user_id=payload.id,
+        username=payload.username,
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+    )
+    message_storage.save_user(user_info)
+
+    response_payload = payload.to_user_payload()
+    return JSONResponse({"success": True, "user": response_payload})
 
 @app.get("/")
 async def root():

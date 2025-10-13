@@ -25,7 +25,8 @@ def load_config(config_path: str = "config.json") -> Dict[str, Any]:
     except FileNotFoundError:
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
     except json.JSONDecodeError as e:
-        raise json.JSONDecodeError(f"Invalid JSON in config file: {str(e)}")
+        # logger.error(f"Error decoding JSON from config file: {e}")
+        raise e
     
     # Override with environment variables if they exist
     config = _override_with_env_vars(config)
@@ -41,6 +42,9 @@ def _override_with_env_vars(config: Dict[str, Any]) -> Dict[str, Any]:
     # Telegram settings
     if "TELEGRAM_BOT_TOKEN" in os.environ:
         config["telegram"]["bot_token"] = os.environ["TELEGRAM_BOT_TOKEN"]
+
+    if "TELEGRAM_BOT_USERNAME" in os.environ:
+        config["telegram"]["bot_username"] = os.environ["TELEGRAM_BOT_USERNAME"]
     
     if "TELEGRAM_WEBHOOK_URL" in os.environ:
         config["telegram"]["webhook_url"] = os.environ["TELEGRAM_WEBHOOK_URL"]
@@ -50,6 +54,21 @@ def _override_with_env_vars(config: Dict[str, Any]) -> Dict[str, Any]:
     
     if "HOST" in os.environ:
         config["telegram"]["host"] = os.environ["HOST"]
+
+    if "TELEGRAM_LOGIN_BUTTON_SIZE" in os.environ:
+        config["telegram"]["login_button_size"] = os.environ["TELEGRAM_LOGIN_BUTTON_SIZE"]
+
+    if "TELEGRAM_LOGIN_BUTTON_RADIUS" in os.environ:
+        try:
+            config["telegram"]["login_button_radius"] = int(os.environ["TELEGRAM_LOGIN_BUTTON_RADIUS"])
+        except ValueError:
+            raise ValueError("TELEGRAM_LOGIN_BUTTON_RADIUS must be an integer")
+
+    if "TELEGRAM_LOGIN_SHOW_USERPIC" in os.environ:
+        config["telegram"]["login_show_userpic"] = os.environ["TELEGRAM_LOGIN_SHOW_USERPIC"].lower() in ("true", "1", "yes")
+
+    if "TELEGRAM_LOGIN_REQUEST_ACCESS" in os.environ:
+        config["telegram"]["login_request_access"] = os.environ["TELEGRAM_LOGIN_REQUEST_ACCESS"]
     
     # Gemini settings
     if "GEMINI_API_KEY" in os.environ:

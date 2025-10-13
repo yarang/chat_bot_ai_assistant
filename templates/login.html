@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram 로그인</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #f4f7f9;
+        }
+        .login-card {
+            background: #fff;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+            text-align: center;
+            max-width: 360px;
+            width: 100%;
+        }
+        h1 {
+            margin-bottom: 12px;
+            color: #1a2b4d;
+        }
+        p {
+            color: #555;
+            margin-bottom: 24px;
+        }
+        #login-status {
+            margin-top: 20px;
+            font-size: 0.95rem;
+            color: #1a2b4d;
+            word-break: keep-all;
+        }
+        #login-status.error {
+            color: #c82333;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <h1>Telegram 로그인</h1>
+        <p>Telegram 계정으로 간편하게 인증하세요.</p>
+        <script
+            async
+            src="https://telegram.org/js/telegram-widget.js?22"
+            data-telegram-login="{{ bot_username }}"
+            data-size="{{ button_size }}"
+            data-radius="{{ button_radius }}"
+            data-userpic="{{ 'true' if show_userpic else 'false' }}"
+            data-onauth="onTelegramAuth(user)"
+            data-request-access="{{ request_access }}">
+        </script>
+        <div id="login-status"></div>
+    </div>
+
+    <script type="text/javascript">
+        async function onTelegramAuth(user) {
+            const statusEl = document.getElementById('login-status');
+            statusEl.classList.remove('error');
+            statusEl.textContent = '인증 정보를 확인하는 중입니다...';
+
+            try {
+                const response = await fetch('/auth/telegram', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(user),
+                    credentials: 'same-origin'
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || '서버 인증 실패');
+                }
+
+                const data = await response.json();
+                statusEl.textContent = `${data.user.first_name}님, 환영합니다!`;
+            } catch (error) {
+                statusEl.classList.add('error');
+                statusEl.textContent = `인증에 실패했습니다: ${error.message}`;
+                console.error('Telegram auth failed:', error);
+            }
+        }
+    </script>
+</body>
+</html>
