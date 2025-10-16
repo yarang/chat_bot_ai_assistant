@@ -308,6 +308,47 @@ class MessageStorage:
             }
 
             return stats
+    
+    def get_user_chat_list(self, user_id: int, limit: int = 20) -> List[Dict[str, Any]]:
+        """특정 사용자가 참여한 채팅방 목록 및 요약 정보 반환"""
+        from sqlalchemy import text
+        with self._get_connection() as conn:
+            result = conn.execute(text("""
+                SELECT 
+                    c.chat_id,
+                    c.chat_type,
+                    c.title,
+                    c.username,
+                    COUNT(m.id) AS message_count,
+                    MAX(m.timestamp) AS last_message_at
+                FROM messages m
+                LEFT JOIN chats c ON m.chat_id = c.chat_id
+                WHERE m.user_id = :user_id
+                GROUP BY c.chat_id, c.chat_type, c.title, c.username
+                ORDER BY last_message_at DESC
+                LIMIT :limit
+            """), {"user_id": user_id, "limit": limit})
+
+            chat_rows = result.mappings().fetchall()
+            chat_list: List[Dict[str, Any]] = []
+            for row in chat_rows:
+                last_message_ts = row.get("last_message_at")
+                if isinstance(last_message_ts, str):
+                    last_message_at = last_message_ts
+                elif last_message_ts is None:
+                    last_message_at = None
+                else:
+                    last_message_at = last_message_ts.isoformat()
+
+                chat_list.append({
+                    "chat_id": row.get("chat_id"),
+                    "chat_type": row.get("chat_type"),
+                    "title": row.get("title"),
+                    "username": row.get("username"),
+                    "message_count": int(row.get("message_count", 0) or 0),
+                    "last_message_at": last_message_at
+                })
+            return chat_list
 
     def save_token_usage(self, user_id: int, chat_id: int, tokens: int, role: str = 'user', message_id: Optional[int] = None, timestamp: Optional[datetime] = None, interaction_id: Optional[str] = None) -> int:
         """

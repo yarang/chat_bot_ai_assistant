@@ -31,6 +31,11 @@
             color: #555;
             margin-bottom: 24px;
         }
+        h2 {
+            font-size: 1.1rem;
+            margin: 24px 0 12px;
+            color: #1a2b4d;
+        }
         #login-status {
             margin-top: 20px;
             font-size: 0.95rem;
@@ -39,6 +44,70 @@
         }
         #login-status.error {
             color: #c82333;
+        }
+        .hidden {
+            display: none;
+        }
+        .auth-result {
+            margin-top: 24px;
+            text-align: left;
+        }
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 12px;
+            margin: 0;
+            padding: 0;
+        }
+        .stat-item {
+            background: #f4f7f9;
+            border-radius: 8px;
+            padding: 12px;
+        }
+        .stat-item dt {
+            font-size: 0.82rem;
+            color: #5c6b8a;
+            margin: 0 0 4px;
+        }
+        .stat-item dd {
+            margin: 0;
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #1a2b4d;
+        }
+        .chat-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        .chat-item {
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 12px;
+            background: #fff;
+        }
+        .chat-item h3 {
+            margin: 0 0 6px;
+            font-size: 1rem;
+            color: #1a2b4d;
+        }
+        .chat-item p {
+            margin: 2px 0;
+            color: #4a5568;
+            font-size: 0.9rem;
+        }
+        .chat-item:last-child {
+            margin-bottom: 0;
+        }
+        .chat-list .empty {
+            text-align: center;
+            color: #6b7280;
+            font-size: 0.9rem;
+            padding: 16px;
+            border: 1px dashed #cbd5f5;
+            border-radius: 8px;
+            background: #f9fafb;
         }
     </style>
 </head>
@@ -57,13 +126,30 @@
             data-request-access="{{ request_access }}">
         </script>
         <div id="login-status"></div>
+        <div id="auth-result" class="auth-result hidden">
+            <div class="db-section">
+                <h2>데이터베이스 상태</h2>
+                <div id="db-summary"></div>
+            </div>
+            <div class="chat-section">
+                <h2>내 대화 목록</h2>
+                <ul id="chat-list" class="chat-list"></ul>
+            </div>
+        </div>
     </div>
 
     <script type="text/javascript">
         async function onTelegramAuth(user) {
             const statusEl = document.getElementById('login-status');
+            const resultSection = document.getElementById('auth-result');
+            const dbSummaryEl = document.getElementById('db-summary');
+            const chatListEl = document.getElementById('chat-list');
+
             statusEl.classList.remove('error');
             statusEl.textContent = '인증 정보를 확인하는 중입니다...';
+            resultSection.classList.add('hidden');
+            dbSummaryEl.textContent = '';
+            chatListEl.innerHTML = '';
 
             try {
                 const response = await fetch('/auth/telegram', {
@@ -80,11 +166,81 @@
 
                 const data = await response.json();
                 statusEl.textContent = `${data.user.first_name}님, 환영합니다!`;
+                renderDatabaseStatus(dbSummaryEl, data.database);
+                renderChatList(chatListEl, data.chats);
+                resultSection.classList.remove('hidden');
             } catch (error) {
                 statusEl.classList.add('error');
                 statusEl.textContent = `인증에 실패했습니다: ${error.message}`;
                 console.error('Telegram auth failed:', error);
             }
+        }
+
+        function renderDatabaseStatus(container, database) {
+            if (!database) {
+                container.textContent = '데이터베이스 정보를 불러오지 못했습니다.';
+                return;
+            }
+
+            const statItems = [
+                { label: '사용자 수', value: database.users },
+                { label: '채팅방 수', value: database.chats },
+                { label: '메시지 수', value: database.messages },
+                { label: 'DB 크기(MB)', value: database.db_size_mb },
+                { label: '참여 사용자 수', value: database.unique_user_chat_count },
+                { label: '총 토큰 사용량', value: database.total_tokens }
+            ];
+
+            container.innerHTML = `
+                <dl class="stat-grid">
+                    ${statItems.map(item => `
+                        <div class="stat-item">
+                            <dt>${item.label}</dt>
+                            <dd>${formatNumber(item.value)}</dd>
+                        </div>
+                    `).join('')}
+                </dl>
+            `;
+        }
+
+        function renderChatList(listEl, chats) {
+            if (!chats || chats.length === 0) {
+                listEl.innerHTML = '<li class="empty">아직 저장된 대화가 없습니다.</li>';
+                return;
+            }
+
+            listEl.innerHTML = chats.map(chat => {
+                const title = chat.title || chat.username || `Chat ${chat.chat_id}`;
+                const lastMessageAt = formatDateTime(chat.last_message_at);
+                const chatTypeLabel = chat.chat_type ? `(${chat.chat_type})` : '';
+                return `
+                    <li class="chat-item">
+                        <h3>${title} ${chatTypeLabel}</h3>
+                        <p>메시지 수: ${formatNumber(chat.message_count)}</p>
+                        <p>최근 활동: ${lastMessageAt}</p>
+                    </li>
+                `;
+            }).join('');
+        }
+
+        function formatDateTime(value) {
+            if (!value) {
+                return '기록 없음';
+            }
+
+            const date = new Date(value);
+            if (isNaN(date.getTime())) {
+                return value;
+            }
+            return date.toLocaleString();
+        }
+
+        function formatNumber(value) {
+            if (value === null || value === undefined) {
+                return '-';
+            }
+            const number = Number(value);
+            return Number.isNaN(number) ? value : number.toLocaleString();
         }
     </script>
 </body>

@@ -120,7 +120,29 @@ async def authenticate_telegram_user(payload: TelegramAuthPayload):
     message_storage.save_user(user_info)
 
     response_payload = payload.to_user_payload()
-    return JSONResponse({"success": True, "user": response_payload})
+    db_stats = message_storage.get_database_stats()
+    recent_activity = [
+        {"date": row["date"], "message_count": row["message_count"]}
+        for row in db_stats.get("recent_activity", []) or []
+    ]
+    user_chats = message_storage.get_user_chat_list(user_info.user_id, limit=20)
+
+    database_status = {
+        "users": db_stats.get("users_count", 0),
+        "chats": db_stats.get("chats_count", 0),
+        "messages": db_stats.get("messages_count", 0),
+        "db_size_mb": db_stats.get("db_size_mb", 0),
+        "unique_user_chat_count": db_stats.get("unique_user_chat_count", 0),
+        "total_tokens": db_stats.get("total_tokens", 0),
+        "recent_activity": recent_activity
+    }
+
+    return JSONResponse({
+        "success": True,
+        "user": response_payload,
+        "database": database_status,
+        "chats": user_chats
+    })
 
 @app.get("/")
 async def root():
