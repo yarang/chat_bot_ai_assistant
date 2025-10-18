@@ -13,6 +13,8 @@ from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 from models import Message
 from message_storage import MessageStorage
+from repositories import ChatRepository
+from services.chat_service import ChatService
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +40,10 @@ class GeminiClient:
         self.top_p = config.get("top_p", 0.8)
         self.top_k = config.get("top_k", 40)
 
-        # Initialize storage
+        # Initialize storage and services
         self.storage = storage or MessageStorage()
+        self.chat_repository = ChatRepository(self.storage)
+        self.chat_service = ChatService(self.chat_repository)
 
         # Configure API
         genai.configure(api_key=self.api_key)
@@ -144,9 +148,9 @@ class GeminiClient:
         message: str,
         maintain_context: bool = True,
         context_length: int = 10,
-    ) -> str:
+    ):
         """
-        Generate response from Gemini with persistent storage
+        Generate response from Gemini with persistent storage, using ChatSession and streaming.
 
         Args:
             chat_id: Telegram chat ID
@@ -155,11 +159,8 @@ class GeminiClient:
             maintain_context: Whether to maintain conversation context
             context_length: Number of previous messages to include in context
 
-        Returns:
-            Generated response string
-
-        Raises:
-            Exception: If API call fails
+        Yields:
+            Generated response string chunks
         """
         logger.info(
             f"Generating response for user {user_id} in chat {chat_id}. "
@@ -167,192 +168,71 @@ class GeminiClient:
             f"(length: {context_length if maintain_context else 0})"
         )
 
-        # 각 상호작용(질문+답변)을 위한 고유 ID 생성
         interaction_id = uuid.uuid4().hex
 
         try:
-            # Save user message to storage
+            # 1. Save user message first
             user_message = Message(
-                chat_id=chat_id,
-                user_id=user_id,
-                role="user",
-                content=message,
-                timestamp=datetime.now(),
+                chat_id=chat_id, user_id=user_id, role="user", content=message, timestamp=datetime.now()
             )
-            # Message 객체에 interaction_id 추가
             setattr(user_message, 'interaction_id', interaction_id)
-            # persist and record tokens
-            logger.debug(f"Saving user message for user {user_id} to storage.")
-            user_msg_id = self.storage.save_message(user_message)
+            self.storage.save_message(user_message)
+
+            # 2. Build history for ChatSession
+            api_history = []
+            persona_prompt = self.chat_service.get_persona(chat_id)
+
             if maintain_context:
-                # Get conversation history from storage
-                history = self.storage.get_conversation_history(
-                    chat_id=chat_id,
-                    limit=context_length
-                    * 2,  # Get more to account for both user and assistant messages
-                    include_system=True,
+                db_history = self.storage.get_conversation_history(
+                    chat_id=chat_id, limit=context_length * 2, include_system=True
                 )
-                logger.debug(f"Retrieved {len(history)} messages from history for context.")
+                for msg in db_history:
+                    api_history.append({
+                        'role': 'model' if msg.role == 'assistant' else 'user', 
+                        'parts': [msg.content]
+                    })
+            
+            # 3. Start chat session and prepare the message to send
+            chat_session = self.model.start_chat(history=api_history)
+            
+            # Inject persona into the first turn if it exists
+            message_to_send = message
+            if persona_prompt and not api_history:
+                message_to_send = f"{persona_prompt}\n\nUser: {message}"
+                logger.debug("Persona prompt injected into the first message.")
 
-                # Build conversation context
-                context_messages = []
-                for msg in history:
-                    if msg.role == "user":
-                        context_messages.append(f"User: {msg.content}")
-                    else:
-                        context_messages.append(f"Assistant: {msg.content}")
+            # 4. Generate response using streaming
+            response_stream = chat_session.send_message(message_to_send, stream=True)
 
-                # Add current message
-                context_messages.append(f"User: {message}")
-
-                # Create prompt with context
-                prompt = "\n".join(context_messages)
-            else:
-                prompt = message
-
-            logger.debug(f"Prompt length for Gemini API: {len(prompt)} characters.")
-            # Generate response
-            response = self.model.generate_content(prompt)
-            logger.debug("Received response from Gemini API.")
-
-            # Defensive extraction helpers: SDK may return object, mapping, or
-            # sequence. Normalize to avoid tuple/dict indexing errors.
-            def _extract_field(obj, name):
-                # attribute access
-                try:
-                    val = getattr(obj, name)
-                    if val is not None:
-                        return val
-                except Exception:
-                    pass
-                # mapping access
-                try:
-                    if isinstance(obj, dict) and name in obj:
-                        return obj[name]
-                    if hasattr(obj, 'get'):
-                        v = obj.get(name)
-                        if v is not None:
-                            return v
-                except Exception:
-                    pass
-                # sequence: try each item recursively
-                try:
-                    if isinstance(obj, (list, tuple)) and len(obj) > 0:
-                        for item in obj:
-                            v = _extract_field(item, name)
-                            if v is not None:
-                                return v
-                except Exception:
-                    pass
-                return None
-
-            # API 응답에서 실제 토큰 사용량 가져오기
-            prompt_tokens = 0
-            candidate_tokens = 0
-
-            usage_meta = _extract_field(response, 'usage_metadata')
-            if usage_meta:
-                try:
-                    # usage_meta may be object or mapping
-                    prompt_tokens = getattr(usage_meta, 'prompt_token_count', None) or usage_meta.get('prompt_token_count', 0)
-                    candidate_tokens = getattr(usage_meta, 'candidates_token_count', None) or usage_meta.get('candidates_token_count', 0)
-                except Exception:
-                    # last resort: introspect tuple/list
-                    try:
-                        if isinstance(usage_meta, (list, tuple)) and len(usage_meta) >= 2:
-                            prompt_tokens = int(usage_meta[0])
-                            candidate_tokens = int(usage_meta[1])
-                    except Exception:
-                        prompt_tokens = 0
-                        candidate_tokens = 0
-
-                logger.info(f"Gemini API token usage: prompt={prompt_tokens}, candidates={candidate_tokens}")
-
-                # 입력(user) 토큰 저장
-                try:
-                    self.storage.save_token_usage(
-                        user_id=user_id,
-                        chat_id=chat_id,
-                        tokens=prompt_tokens,
-                        role="user",
-                        message_id=user_msg_id,
-                        interaction_id=interaction_id,
-                    )
-                except Exception:
-                    logger.exception("Failed to record user token usage from API")
-
-
-            # Defensive extraction for the main text body
-            response_text = None
-            raw_text = _extract_field(response, 'text')
-            if raw_text:
-                try:
-                    response_text = raw_text.strip()
-                except Exception:
-                    try:
-                        response_text = str(raw_text)
-                    except Exception:
-                        response_text = None
-
-            # If we still don't have text, log the response structure for debugging
-            if response_text is None:
-                try:
-                    logger.debug(f"Gemini response raw type: {type(response)}, repr: {repr(response)[:200]}")
-                except Exception:
-                    pass
-
+            full_response_text = ""
+            for chunk in response_stream:
+                if chunk.text:
+                    yield chunk.text
+                    full_response_text += chunk.text
+            
+            # 5. Save the full response to the database at the end
+            response_text = full_response_text.strip()
             if response_text:
-
-                # AI 응답이 "Assistant:"로 시작하는 경우, 해당 접두사 제거
-                # 대소문자를 구분하지 않고 확인
-                if response_text.lower().startswith("assistant:"):
-                    response_text = response_text[len("assistant:") :].lstrip()
-
-                # Save assistant response to storage
                 assistant_message = Message(
-                    chat_id=chat_id,
-                    user_id=user_id,  # Associate with the user who triggered the response
-                    role="assistant",
-                    content=response_text,
+                    chat_id=chat_id, user_id=user_id, role="assistant", content=response_text,
                     timestamp=datetime.now(),
-                    metadata={
-                        "model": self.model_name,
-                        "temperature": self.temperature,
-                        "context_used": maintain_context,
-                    },
+                    metadata={"model": self.model_name, "temperature": self.temperature, "context_used": maintain_context}
                 )
-                # Message 객체에 interaction_id 추가
                 setattr(assistant_message, 'interaction_id', interaction_id)
-                logger.debug(f"Saving assistant response for user {user_id} to storage.")
-                assistant_msg_id = self.storage.save_message(assistant_message)
-
-                # 출력(assistant) 토큰 저장
-                if candidate_tokens > 0:
-                    try:
-                        self.storage.save_token_usage(
-                            user_id=user_id,
-                            chat_id=chat_id,
-                            tokens=candidate_tokens,
-                            role="assistant",
-                            message_id=assistant_msg_id,
-                            interaction_id=interaction_id,
-                        )
-                    except Exception:
-                        logger.exception("Failed to record assistant token usage from API")
-
-                logger.info(f"Generated response for user {user_id} in chat {chat_id}")
-                return response_text
+                self.storage.save_message(assistant_message)
+                logger.info(f"Finished generating and saving full response for user {user_id} in chat {chat_id}")
             else:
-                logger.warning(
-                    f"Empty response from Gemini for user {user_id} in chat {chat_id}"
-                )
-                return "죄송합니다. 응답을 생성할 수 없습니다."
+                logger.warning(f"Empty final response from Gemini for user {user_id} in chat {chat_id}")
 
+            # 6. Note about token counting
+            logger.warning("Token usage metadata is not available for streaming responses and was not recorded.")
+
+        except StopIteration:
+            logger.warning(f"Caught StopIteration for user {user_id} in chat {chat_id}, likely an empty response from the model.")
+            yield "모델로부터 응답이 없습니다. 다른 질문을 시도해 주세요."
         except Exception as e:
-            logger.error(
-                f"Error generating response for user {user_id} in chat {chat_id}: {str(e)}"
-            )
-            return f"오류가 발생했습니다: {str(e)}"
+            logger.exception(f"Error generating response for user {user_id} in chat {chat_id}: {str(e)}")
+            yield f"오류가 발생했습니다: {str(e)}"
 
     def clear_conversation(self, chat_id: int, user_id: int) -> int:
         """

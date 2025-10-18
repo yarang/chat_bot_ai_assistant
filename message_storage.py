@@ -20,14 +20,24 @@ logger = logging.getLogger(__name__)
 class MessageStorage:
     def clear_conversation(self, chat_id: int, user_id: int) -> int:
         """
-        해당 채팅방(chat_id)과 사용자(user_id)의 모든 메시지를 삭제
+        해당 채팅방(chat_id)의 모든 메시지를 삭제합니다.
+        이전에는 특정 사용자의 메시지만 삭제했지만, 사용자의 기대와 다를 수 있어
+        채팅방 전체의 기록을 삭제하도록 변경합니다.
+        
         Returns: 삭제된 메시지 개수
         """
         from sqlalchemy import text
         with self._lock:
             with self._get_connection() as conn:
                 with conn.begin():
-                    cursor = conn.execute(text("DELETE FROM messages WHERE chat_id = :chat_id AND user_id = :user_id"), {"chat_id": chat_id, "user_id": user_id})
+                    logger.info(f"Clearing ALL messages and token usage for chat_id={chat_id}, triggered by user_id={user_id}.")
+                    
+                    # First, delete from token_usage to satisfy foreign key constraints
+                    conn.execute(text("DELETE FROM token_usage WHERE chat_id = :chat_id"), {"chat_id": chat_id})
+                    
+                    # Then, delete from messages
+                    cursor = conn.execute(text("DELETE FROM messages WHERE chat_id = :chat_id"), {"chat_id": chat_id})
+                    
                 return cursor.rowcount
     """SQLite 기반 메시지 저장소"""
     
@@ -95,6 +105,7 @@ class MessageStorage:
                         chat_type TEXT NOT NULL,
                         title TEXT,
                         username TEXT,
+                        persona_prompt TEXT,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """))
@@ -143,6 +154,7 @@ class MessageStorage:
             # 스키마 마이그레이션: interaction_id 컬럼 추가
             self._add_column_if_not_exists(conn, 'messages', 'interaction_id', 'TEXT')
             self._add_column_if_not_exists(conn, 'token_usage', 'interaction_id', 'TEXT')
+            self._add_column_if_not_exists(conn, 'chats', 'persona_prompt', 'TEXT')
 
         logger.info(f"Database initialized: {self.db_path}")
     
@@ -169,14 +181,43 @@ class MessageStorage:
     
     def save_chat(self, chat_info: ChatInfo) -> None:
         """채팅 정보 저장/업데이트"""
+        logger.debug(f"[SAVE_CHAT] Saving chat info for chat_id {chat_info.chat_id}: {chat_info}")
         with self._lock:
             with self._get_connection() as conn:
                 from sqlalchemy import text
                 with conn.begin():
                     conn.execute(text("""
-                        INSERT OR REPLACE INTO chats (chat_id, chat_type, title, username)
-                        VALUES (:chat_id, :chat_type, :title, :username)
-                    """), {"chat_id": chat_info.chat_id, "chat_type": chat_info.chat_type, "title": chat_info.title, "username": chat_info.username})
+                        INSERT OR REPLACE INTO chats (chat_id, chat_type, title, username, persona_prompt)
+                        VALUES (:chat_id, :chat_type, :title, :username, :persona_prompt)
+                    """), {
+                        "chat_id": chat_info.chat_id, 
+                        "chat_type": chat_info.chat_type, 
+                        "title": chat_info.title, 
+                        "username": chat_info.username,
+                        "persona_prompt": getattr(chat_info, 'persona_prompt', None)
+                    })
+
+    def update_chat_persona(self, chat_id: int, persona_prompt: str) -> None:
+        """채팅 페르소나 업데이트"""
+        with self._lock:
+            with self._get_connection() as conn:
+                from sqlalchemy import text
+                with conn.begin():
+                    conn.execute(text("""
+                        UPDATE chats 
+                        SET persona_prompt = :persona_prompt 
+                        WHERE chat_id = :chat_id
+                    """), {"persona_prompt": persona_prompt, "chat_id": chat_id})
+
+    def get_chat_persona(self, chat_id: int) -> Optional[str]:
+        """채팅 페르소나 조회"""
+        logger.debug(f"[GET_CHAT_PERSONA] Getting persona for chat_id {chat_id}")
+        with self._get_connection() as conn:
+            from sqlalchemy import text
+            result = conn.execute(text("SELECT persona_prompt FROM chats WHERE chat_id = :chat_id"), {"chat_id": chat_id})
+            row = result.fetchone()
+            logger.debug(f"[GET_CHAT_PERSONA] Fetched row for chat_id {chat_id}: {row}")
+            return row[0] if row else None
     
     def save_message(self, message: Message) -> int:
         """

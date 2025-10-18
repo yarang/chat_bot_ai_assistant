@@ -22,6 +22,8 @@ def setup_telegram_app(config):
     from gemini_client import GeminiClient
     from message_storage import MessageStorage
     from services.message_service import MessageService
+    from services.chat_service import ChatService
+    from repositories.chat_repository import ChatRepository
     from handlers.command_handler_service import CommandHandlerService
     from handlers.message_handler_service import MessageHandlerService
     from handlers.error_handler import ErrorHandler
@@ -29,7 +31,9 @@ def setup_telegram_app(config):
     message_storage = MessageStorage()
     gemini_client = GeminiClient(config.get('gemini', {}), message_storage)
     message_service = MessageService(message_storage)
-    command_handler_service = CommandHandlerService(message_storage=message_storage)
+    chat_repository = ChatRepository(message_storage)
+    chat_service = ChatService(chat_repository)
+    command_handler_service = CommandHandlerService(message_storage=message_storage, chat_service=chat_service)
     message_handler_service = MessageHandlerService(gemini_client)
     error_handler_service = ErrorHandler()
 

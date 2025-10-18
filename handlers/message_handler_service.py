@@ -20,27 +20,51 @@ class MessageHandlerService:
                 f"❌ 메시지가 너무 깁니다. 최대 {max_length}자까지 입력 가능합니다."
             )
             return
+
+        # Check if a new conversation should be started
+        start_new_conversation = context.user_data.get('new_conversation', False)
+        if start_new_conversation:
+            maintain_context = False
+            context.user_data['new_conversation'] = False  # Reset the flag
+            logger.info(f"Handling message for user {user.id} with new conversation context.")
+        else:
+            maintain_context = True
+
         try:
             await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-            raw_response = await self.gemini_client.generate_response(
+            
+            # Buffer for combining response chunks
+            response_buffer = ""
+            telegram_message_limit = 4000  # A bit less than 4096 for safety
+
+            # Use async for to stream and buffer the response chunks
+            async for chunk in self.gemini_client.generate_response(
                 chat_id=update.effective_chat.id,
                 user_id=user.id,
-                message=message
-            )
-            # Ensure response is a string for Telegram
-            try:
-                response = str(raw_response) if raw_response is not None else ""
-            except Exception:
-                logger.exception("Failed to coerce Gemini response to string")
-                response = ""
+                message=message,
+                maintain_context=maintain_context  # Pass the context flag
+            ):
+                if chunk:
+                    response_buffer += chunk
+                    # When buffer exceeds the limit, find a good split point and send
+                    while len(response_buffer) > telegram_message_limit:
+                        # Find the last newline to split gracefully
+                        split_pos = response_buffer.rfind('\n', 0, telegram_message_limit)
+                        
+                        # If no newline found, force split at the limit (less ideal but necessary)
+                        if split_pos == -1:
+                            split_pos = telegram_message_limit
+                        
+                        message_to_send = response_buffer[:split_pos]
+                        response_buffer = response_buffer[split_pos:].lstrip()
 
-            max_telegram_length = 4096
-            if len(response) > max_telegram_length:
-                chunks = [response[i:i+max_telegram_length] for i in range(0, len(response), max_telegram_length)]
-                for chunk in chunks:
-                    await update.message.reply_text(chunk)
-            else:
-                await update.message.reply_text(response)
+                        if message_to_send.strip():
+                            await update.message.reply_text(message_to_send)
+
+            # Send any remaining text in the buffer after the loop finishes
+            if response_buffer.strip():
+                await update.message.reply_text(response_buffer)
+
             logger.info(f"Message handled for user {user.id}")
         except Exception as e:
             logger.error(f"Error handling message from user {user.id}: {str(e)}")

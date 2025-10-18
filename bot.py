@@ -69,9 +69,13 @@ class Bot:
 
         app.add_handler(CommandHandler("start", cmd_svc.start))
         app.add_handler(CommandHandler("help", cmd_svc.help))
+        app.add_handler(CommandHandler("set_persona", cmd_svc.set_persona))
+        app.add_handler(CommandHandler("get_persona", cmd_svc.get_persona))
         # only register clear if the service implements it
         if hasattr(cmd_svc, "clear"):
             app.add_handler(CommandHandler("clear", cmd_svc.clear))
+
+        app.add_handler(CommandHandler("new", self.new_conversation_command))
 
         # Register text message handler
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg_svc.handle))
@@ -81,6 +85,17 @@ class Bot:
             app.add_error_handler(err_svc.handle)
 
         logger.info("Bot handlers setup complete with DI & SRP")
+
+    async def new_conversation_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handles the /new command to start a new conversation context."""
+        if not update.effective_chat or not update.effective_user:
+            return
+
+        context.user_data['new_conversation'] = True
+        await update.message.reply_text(
+            "새로운 대화를 시작합니다. 다음 메시지부터는 이전 대화 내용을 참조하지 않습니다."
+        )
+        logger.info(f"User {update.effective_user.id} started a new conversation context.")
 
     # --- Dynamic service registry API -------------------------------------------------
     def register_service(self, name: str, service: Any) -> None:

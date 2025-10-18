@@ -11,3 +11,4 @@ class ChatInfo:
     title: Optional[str] = None
     username: Optional[str] = None
     created_at: Optional[datetime] = None
+    persona_prompt: Optional[str] = None
