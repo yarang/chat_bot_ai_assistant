@@ -69,13 +69,13 @@ class MessageStorage:
             # Use driver-level exec to run PRAGMA and DDL statements which are
             # not always accepted as SQLAlchemy 'text' executables in all
             # configurations.
-            result = conn.exec_driver_sql(f"PRAGMA table_info({table_name})")
+            result = conn.exec_driver_sql(f"PRAGMA table_info({table_name})") # noqa: E501
             # Use mappings() to get dict-like rows so we can access by column name
             mappings = result.mappings().fetchall()
             columns = [row['name'] for row in mappings]
             if column_name not in columns:
                 logger.info(f"Adding column '{column_name}' to table '{table_name}'...")
-                conn.exec_driver_sql(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
+                conn.exec_driver_sql(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}") # noqa: E501
                 logger.info(f"Column '{column_name}' added to table '{table_name}'.")
         except sqlite3.Error as e:
             # 테이블이 아직 존재하지 않는 경우 등 PRAGMA에서 오류가 발생할 수 있음
@@ -185,17 +185,34 @@ class MessageStorage:
         with self._lock:
             with self._get_connection() as conn:
                 from sqlalchemy import text
+                # Use INSERT OR IGNORE + UPDATE to prevent overwriting existing fields with None
                 with conn.begin():
+                    # 1. Try to insert a new record, but ignore if chat_id already exists.
                     conn.execute(text("""
-                        INSERT OR REPLACE INTO chats (chat_id, chat_type, title, username, persona_prompt)
+                        INSERT OR IGNORE INTO chats (chat_id, chat_type, title, username, persona_prompt)
                         VALUES (:chat_id, :chat_type, :title, :username, :persona_prompt)
                     """), {
                         "chat_id": chat_info.chat_id, 
-                        "chat_type": chat_info.chat_type, 
+                        "chat_type": chat_info.chat_type,
                         "title": chat_info.title, 
                         "username": chat_info.username,
                         "persona_prompt": getattr(chat_info, 'persona_prompt', None)
                     })
+                    
+                    # 2. If the record already existed, update fields that are not None in the new object.
+                    # This prevents overwriting existing data with None values.
+                    update_fields = {
+                        "chat_type": chat_info.chat_type,
+                    }
+                    if chat_info.title is not None:
+                        update_fields["title"] = chat_info.title
+                    if chat_info.username is not None:
+                        update_fields["username"] = chat_info.username
+                    if getattr(chat_info, 'persona_prompt', None) is not None:
+                        update_fields["persona_prompt"] = chat_info.persona_prompt
+
+                    update_stmt = ", ".join([f"{key} = :{key}" for key in update_fields])
+                    conn.execute(text(f"UPDATE chats SET {update_stmt} WHERE chat_id = :chat_id"), {"chat_id": chat_info.chat_id, **update_fields})
 
     def update_chat_persona(self, chat_id: int, persona_prompt: str) -> None:
         """채팅 페르소나 업데이트"""

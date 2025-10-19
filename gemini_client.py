@@ -204,12 +204,14 @@ class GeminiClient:
             # 4. Generate response using streaming
             response_stream = chat_session.send_message(message_to_send, stream=True)
 
+            finish_reason = None
             full_response_text = ""
             for chunk in response_stream:
                 if chunk.text:
                     yield chunk.text
                     full_response_text += chunk.text
-            
+                finish_reason = chunk.candidates[0].finish_reason.name if chunk.candidates else None
+
             # 5. Save the full response to the database at the end
             response_text = full_response_text.strip()
             if response_text:
@@ -226,6 +228,9 @@ class GeminiClient:
 
             # 6. Note about token counting
             logger.warning("Token usage metadata is not available for streaming responses and was not recorded.")
+
+            # 7. Yield finish reason at the end
+            yield {"finish_reason": finish_reason, "full_response_text": full_response_text}
 
         except StopIteration:
             logger.warning(f"Caught StopIteration for user {user_id} in chat {chat_id}, likely an empty response from the model.")

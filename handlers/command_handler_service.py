@@ -64,6 +64,24 @@ class CommandHandlerService:
             logger.error(f"Error getting persona for chat {chat.id}: {str(e)}")
             await update.message.reply_text("❌ 페르소나 조회 중 오류가 발생했습니다.")
 
+    async def new(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Starts a new conversation by clearing the context, but not the stored messages."""
+        if not update.message:
+            logger.error("Update has no message attribute")
+            return
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+        try:
+            if self.message_storage:
+                # This method only clears the context for the next AI response,
+                # it does not delete messages from the database.
+                self.message_storage.clear_conversation_context(chat_id, user_id)
+                await update.message.reply_text("✅ 새로운 대화를 시작합니다. 이제 새로운 페르소나(설정된 경우) 또는 컨텍스트로 대화할 수 있습니다.")
+                logger.info(f"New conversation context started for chat {chat_id}, user {user_id}")
+        except Exception as e:
+            logger.error(f"Error starting new conversation for chat {chat_id}, user {user_id}: {str(e)}")
+            await update.message.reply_text("❌ 새 대화를 시작하는 중 오류가 발생했습니다.")
+
     async def clear(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.message:
             logger.error("Update has no message attribute")
@@ -107,10 +125,12 @@ class CommandHandlerService:
 🔧 **도움말**
 • 저에게 아무 메시지나 보내주세요
 • AI가 자동으로 답변해드립니다
-• 대화 기록이 영구 보관됩니다
 • `/start` - 시작 메시지 보기
 • `/help` - 이 도움말 보기
-• `/clear` - 대화 기록 정보 보기
+• `/new` - 새 대화 시작 (AI의 기억만 리셋)
+• `/clear` - 모든 대화 기록 삭제
+• `/set_persona [내용]` - AI의 역할 설정
+• `/get_persona` - 현재 설정된 페르소나 확인
 • `/info` - 봇 및 AI 모델 정보
 • `/settings` - 현재 설정 보기
 • `/stats` - 개인 및 채팅 통계
